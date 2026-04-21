@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/Users/UMUT/Desktop/diyabet_projesi/.venv/Scripts/pip install:*)",
+      "Bash(/c/Users/UMUT/Desktop/diyabet_projesi/.venv/Scripts/python.exe -c \"import sys; print\\(sys.executable\\); import site; print\\(site.getsitepackages\\(\\)\\)\")"
+    ]
+  }
+}
