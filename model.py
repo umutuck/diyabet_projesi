@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
@@ -67,7 +68,7 @@ print(f"\n    En önemli 5 özellik: {top_5_features}")
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # 6. TÜM MODELLERİ EĞİT (TAM ÖZELLİKLERLE)
-print("\n[6] MODEL EĞİTİMİ (5 Farklı Algoritma - 8 özellik)")
+print("\n[6] MODEL EĞİTİMİ (6 Farklı Algoritma - 8 özellik)")
 print("     " + "-"*50)
 
 scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
@@ -82,6 +83,10 @@ modeller = {
         ('scaler', StandardScaler()),
         ('model', KNeighborsClassifier(n_neighbors=5))
     ]),
+    "SVM": Pipeline([
+        ('scaler', StandardScaler()),
+        ('model', SVC(kernel='rbf', probability=True, class_weight='balanced', random_state=42))
+    ]),
     "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, class_weight='balanced'),
     "XGBoost": XGBClassifier(n_estimators=100, random_state=42, max_depth=6,
                               scale_pos_weight=scale_pos_weight,
@@ -91,11 +96,12 @@ modeller = {
 sonuclar = {}
 
 for isim, model in modeller.items():
+    # CV sadece eğitim seti üzerinde çalışır; test seti yalnızca final değerlendirme içindir.
+    cv_auc = cross_val_score(model, X_train, y_train, cv=skf, scoring='roc_auc').mean()
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     acc    = accuracy_score(y_test, y_pred)
     auc    = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-    cv_auc = cross_val_score(model, X, y, cv=skf, scoring='roc_auc').mean()
 
     sonuclar[isim] = {
         'model': model, 'y_pred': y_pred,
@@ -107,10 +113,10 @@ for isim, model in modeller.items():
     print(f"    Accuracy : {acc:.4f}")
     print(f"    ROC-AUC  : {auc:.4f}")
     print(f"    CV AUC   : {cv_auc:.4f}")
-    print(f"    Classification Report:\n{classification_report(y_test, y_pred, target_names=['Sağlıklı','Diyabetli'])}")
+    print(f"    Classification Report (Diyabetli sınıfı odaklı):\n{classification_report(y_test, y_pred, target_names=['Negatif','Diyabetli'])}")
 
 # 7. TÜM KOMBİNASYONLAR: HER ALGORİTMA × (FULL + TOP 5)
-print(f"\n[7] MODEL KARŞILAŞTIRMASI (5 Algoritma × Full + Top 5 = 10 kombinasyon)")
+print(f"\n[7] MODEL KARŞILAŞTIRMASI (6 Algoritma × Full + Top 5 = 12 kombinasyon)")
 print("     " + "-"*62)
 
 tum_modeller = {
@@ -122,6 +128,10 @@ tum_modeller = {
     "KNN": Pipeline([
         ('scaler', StandardScaler()),
         ('model', KNeighborsClassifier(n_neighbors=5))
+    ]),
+    "SVM": Pipeline([
+        ('scaler', StandardScaler()),
+        ('model', SVC(kernel='rbf', probability=True, class_weight='balanced', random_state=42))
     ]),
     "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, class_weight='balanced'),
     "XGBoost": XGBClassifier(n_estimators=100, random_state=42, max_depth=6,
@@ -146,11 +156,11 @@ for isim in tum_modeller:
         else:
             import copy
             m = copy.deepcopy(tum_modeller[isim])
+            cv_auc = cross_val_score(m, X_train[features], y_train, cv=skf, scoring='roc_auc').mean()
             m.fit(X_train[features], y_train)
             y_pred = m.predict(X_test[features])
             acc    = accuracy_score(y_test, y_pred)
             auc    = roc_auc_score(y_test, m.predict_proba(X_test[features])[:, 1])
-            cv_auc = cross_val_score(m, X[features], y, cv=skf, scoring='roc_auc').mean()
             tum_kombinasyonlar[kombinasyon_adi] = {
                 'model': m, 'features': features,
                 'acc': acc, 'auc': auc, 'cv_auc': cv_auc,
@@ -179,7 +189,7 @@ y_pred_final = en_iyi['y_pred']
 fig, ax = plt.subplots(figsize=(6, 5))
 ConfusionMatrixDisplay(
     confusion_matrix(y_test, y_pred_final),
-    display_labels=["Sağlıklı", "Diyabetli"]
+    display_labels=["Negatif", "Diyabetli"]
 ).plot(ax=ax, colorbar=False)
 ax.set_title(f"Confusion Matrix - {final_name}")
 plt.tight_layout()
@@ -254,7 +264,7 @@ print(f"  • Binary Classification     : ✓")
 print(f"  • Train-Test Split          : ✓ (80-20, stratified)")
 print(f"  • Cross Validation          : ✓ (5-Fold Stratified K-Fold)")
 print(f"  • Feature Selection         : ✓ (Mutual Information)")
-print(f"  • 5 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, RF, XGBoost)")
+print(f"  • 6 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, SVM, RF, XGBoost)")
 print(f"  • Eşik Optimizasyonu        : ✓ (Optimal eşik: {optimal_threshold:.2f})")
 print(f"  • Full vs Top 5             : ✓")
 print(f"  • ROC Eğrisi                : ✓ (roc_curve.png)")

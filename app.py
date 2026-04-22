@@ -40,4 +40,4 @@ if st.button("Riski Hesapla"):
     if risk >= threshold:
         st.error("Yüksek risk — bir doktora başvurun.")
     else:
-        st.success("Düşük risk.")
+        st.info("Düşük risk — mevcut bulgularla diyabet açısından düşük olasılık.")
