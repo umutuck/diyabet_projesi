@@ -8,11 +8,13 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.pipeline import Pipeline
+from sklearn.base import clone
 from xgboost import XGBClassifier
 import numpy as np
 
@@ -51,6 +53,45 @@ print(f"\n[4] Eğitim-Test Bölme (80-20):")
 print(f"    Eğitim: {X_train.shape[0]} örnek")
 print(f"    Test: {X_test.shape[0]} örnek")
 
+# 4.1 SINIF DENGELEME (Downsampling - hedef oran: 2:1)
+# Not: Sadece eğitim verisinde uygulanır; test setine asla dokunulmaz.
+target_ratio = 2.0  # majority / minority
+train_df = X_train.copy()
+train_df["Outcome"] = y_train.values
+
+class_counts = train_df["Outcome"].value_counts()
+majority_class = class_counts.idxmax()
+minority_class = class_counts.idxmin()
+majority_count = class_counts[majority_class]
+minority_count = class_counts[minority_class]
+current_ratio = majority_count / minority_count
+
+if current_ratio > target_ratio:
+    target_majority_count = int(target_ratio * minority_count)
+    majority_part = train_df[train_df["Outcome"] == majority_class].sample(
+        n=target_majority_count, random_state=42
+    )
+    minority_part = train_df[train_df["Outcome"] == minority_class]
+    balanced_train_df = pd.concat([majority_part, minority_part], axis=0).sample(
+        frac=1.0, random_state=42
+    )
+    print(f"\n[4.1] Downsampling uygulandı: oran {current_ratio:.2f}:1 -> {target_ratio:.1f}:1")
+else:
+    balanced_train_df = train_df.copy()
+    print(
+        f"\n[4.1] Downsampling gerekmedi: mevcut oran {current_ratio:.2f}:1 "
+        f"(hedef <= {target_ratio:.1f}:1)"
+    )
+
+X_train = balanced_train_df.drop("Outcome", axis=1)
+y_train = balanced_train_df["Outcome"]
+print(f"      Yeni eğitim dağılımı: {y_train.value_counts().to_dict()}")
+
+# Downsampling sonrası ayrıca class_weight / scale_pos_weight kullanmıyoruz.
+# Böylece aynı dengesizlik düzeltmesini iki kez uygulayıp modeli gereksiz zorlamıyoruz.
+class_weight_opt = None
+scale_pos_weight = 1.0
+
 # 5. ÖZELLİK SEÇİMİ - sadece X_train üzerinde (Data Leakage önlemi)
 mi_scores = mutual_info_classif(X_train, y_train, random_state=42)
 feature_importance_df = pd.DataFrame({
@@ -67,35 +108,42 @@ print(f"\n    En önemli 5 özellik: {top_5_features}")
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # 6. TÜM MODELLERİ EĞİT (TAM ÖZELLİKLERLE)
-print("\n[6] MODEL EĞİTİMİ (5 Farklı Algoritma - 8 özellik)")
+print("\n[6] MODEL EĞİTİMİ (6 Farklı Algoritma - 8 özellik)")
 print("     " + "-"*50)
 
-scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+def build_models():
+    return {
+        "Logistic Regression": Pipeline([
+            ('scaler', StandardScaler()),
+            ('model', LogisticRegression(random_state=42, max_iter=1000, class_weight=class_weight_opt))
+        ]),
+        "Decision Tree": DecisionTreeClassifier(random_state=42, max_depth=10, class_weight=class_weight_opt),
+        "KNN": Pipeline([
+            ('scaler', StandardScaler()),
+            ('model', KNeighborsClassifier(n_neighbors=5))
+        ]),
+        "SVM": Pipeline([
+            ('scaler', StandardScaler()),
+            ('model', SVC(kernel='rbf', probability=True, class_weight=class_weight_opt, random_state=42))
+        ]),
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, class_weight=class_weight_opt),
+        "XGBoost": XGBClassifier(
+            n_estimators=100, random_state=42, max_depth=6,
+            scale_pos_weight=scale_pos_weight, eval_metric='logloss', verbosity=0
+        ),
+    }
 
-modeller = {
-    "Logistic Regression": Pipeline([
-        ('scaler', StandardScaler()),
-        ('model', LogisticRegression(random_state=42, max_iter=1000, class_weight='balanced'))
-    ]),
-    "Decision Tree": DecisionTreeClassifier(random_state=42, max_depth=10, class_weight='balanced'),
-    "KNN": Pipeline([
-        ('scaler', StandardScaler()),
-        ('model', KNeighborsClassifier(n_neighbors=5))
-    ]),
-    "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, class_weight='balanced'),
-    "XGBoost": XGBClassifier(n_estimators=100, random_state=42, max_depth=6,
-                              scale_pos_weight=scale_pos_weight,
-                              eval_metric='logloss', verbosity=0),
-}
+modeller = build_models()
 
 sonuclar = {}
 
 for isim, model in modeller.items():
+    # CV sadece eğitim seti üzerinde çalışır; test seti yalnızca final değerlendirme içindir.
+    cv_auc = cross_val_score(model, X_train, y_train, cv=skf, scoring='roc_auc').mean()
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     acc    = accuracy_score(y_test, y_pred)
     auc    = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-    cv_auc = cross_val_score(model, X, y, cv=skf, scoring='roc_auc').mean()
 
     sonuclar[isim] = {
         'model': model, 'y_pred': y_pred,
@@ -107,27 +155,13 @@ for isim, model in modeller.items():
     print(f"    Accuracy : {acc:.4f}")
     print(f"    ROC-AUC  : {auc:.4f}")
     print(f"    CV AUC   : {cv_auc:.4f}")
-    print(f"    Classification Report:\n{classification_report(y_test, y_pred, target_names=['Sağlıklı','Diyabetli'])}")
+    print(f"    Classification Report (Diyabetli sınıfı odaklı):\n{classification_report(y_test, y_pred, target_names=['Negatif','Diyabetli'])}")
 
 # 7. TÜM KOMBİNASYONLAR: HER ALGORİTMA × (FULL + TOP 5)
-print(f"\n[7] MODEL KARŞILAŞTIRMASI (5 Algoritma × Full + Top 5 = 10 kombinasyon)")
+print(f"\n[7] MODEL KARŞILAŞTIRMASI (6 Algoritma × Full + Top 5 = 12 kombinasyon)")
 print("     " + "-"*62)
 
-tum_modeller = {
-    "Logistic Regression": Pipeline([
-        ('scaler', StandardScaler()),
-        ('model', LogisticRegression(random_state=42, max_iter=1000, class_weight='balanced'))
-    ]),
-    "Decision Tree": DecisionTreeClassifier(random_state=42, max_depth=10, class_weight='balanced'),
-    "KNN": Pipeline([
-        ('scaler', StandardScaler()),
-        ('model', KNeighborsClassifier(n_neighbors=5))
-    ]),
-    "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, class_weight='balanced'),
-    "XGBoost": XGBClassifier(n_estimators=100, random_state=42, max_depth=6,
-                              scale_pos_weight=scale_pos_weight,
-                              eval_metric='logloss', verbosity=0),
-}
+tum_modeller = build_models()
 
 tum_kombinasyonlar = {}
 
@@ -146,11 +180,11 @@ for isim in tum_modeller:
         else:
             import copy
             m = copy.deepcopy(tum_modeller[isim])
+            cv_auc = cross_val_score(m, X_train[features], y_train, cv=skf, scoring='roc_auc').mean()
             m.fit(X_train[features], y_train)
             y_pred = m.predict(X_test[features])
             acc    = accuracy_score(y_test, y_pred)
             auc    = roc_auc_score(y_test, m.predict_proba(X_test[features])[:, 1])
-            cv_auc = cross_val_score(m, X[features], y, cv=skf, scoring='roc_auc').mean()
             tum_kombinasyonlar[kombinasyon_adi] = {
                 'model': m, 'features': features,
                 'acc': acc, 'auc': auc, 'cv_auc': cv_auc,
@@ -164,22 +198,51 @@ for ad, s in tum_kombinasyonlar.items():
 
 en_iyi_isim = max(tum_kombinasyonlar, key=lambda x: (tum_kombinasyonlar[x]['acc'], tum_kombinasyonlar[x]['auc']))
 en_iyi = tum_kombinasyonlar[en_iyi_isim]
-final_model    = en_iyi['model']
 final_features = en_iyi['features']
 final_name     = en_iyi_isim
 
-print(f"\n  Kazanan: {final_name} → Accuracy: {en_iyi['acc']:.4f}, AUC: {en_iyi['auc']:.4f}")
+print("\n  Model seçimi CV-AUC öncelikli yapıldı (genelleme performansı odaklı).")
+en_iyi_isim = max(
+    tum_kombinasyonlar,
+    key=lambda x: (tum_kombinasyonlar[x]['cv_auc'], tum_kombinasyonlar[x]['auc'])
+)
+en_iyi = tum_kombinasyonlar[en_iyi_isim]
+final_features = en_iyi['features']
+final_name = en_iyi_isim
+
+print(
+    f"  Kazanan: {final_name} → CV-AUC: {en_iyi['cv_auc']:.4f}, "
+    f"Test AUC: {en_iyi['auc']:.4f}, Accuracy: {en_iyi['acc']:.4f}"
+)
+
+# Test setini kirletmemek için threshold eğitim verisi içindeki validation ile bulunur.
+model_template = clone(en_iyi['model'])
+X_subtrain, X_val, y_subtrain, y_val = train_test_split(
+    X_train[final_features], y_train, test_size=0.2, random_state=42, stratify=y_train
+)
+model_template.fit(X_subtrain, y_subtrain)
+y_proba_val = model_template.predict_proba(X_val)[:, 1]
+_, _, thresholds_val = roc_curve(y_val, y_proba_val)
+f1_scores_val = []
+for t in thresholds_val:
+    y_pred_val_t = (y_proba_val >= t).astype(int)
+    f1_scores_val.append(f1_score(y_val, y_pred_val_t))
+optimal_threshold = thresholds_val[np.argmax(f1_scores_val)]
+
+# Final model tüm eğitim verisiyle yeniden eğitilir.
+final_model = clone(en_iyi['model'])
+final_model.fit(X_train[final_features], y_train)
 
 # 9. CONFUSION MATRIX (FINAL MODEL)
 print(f"\n[8] CONFUSION MATRIX ({final_name})")
 print("     " + "-"*50)
 
-y_pred_final = en_iyi['y_pred']
+y_pred_final = final_model.predict(X_test[final_features])
 
 fig, ax = plt.subplots(figsize=(6, 5))
 ConfusionMatrixDisplay(
     confusion_matrix(y_test, y_pred_final),
-    display_labels=["Sağlıklı", "Diyabetli"]
+    display_labels=["Negatif", "Diyabetli"]
 ).plot(ax=ax, colorbar=False)
 ax.set_title(f"Confusion Matrix - {final_name}")
 plt.tight_layout()
@@ -214,32 +277,26 @@ print(f"\n[10] EŞİK OPTİMİZASYONU (Threshold Optimization)")
 print("     " + "-"*50)
 
 y_proba_final = final_model.predict_proba(X_test[final_features])[:, 1]
-fpr, tpr, thresholds = roc_curve(y_test, y_proba_final)
-
-f1_scores = []
-for t in thresholds:
-    y_pred_t = (y_proba_final >= t).astype(int)
-    f1_scores.append(f1_score(y_test, y_pred_t))
-
-optimal_threshold = thresholds[np.argmax(f1_scores)]
 y_pred_optimized  = (y_proba_final >= optimal_threshold).astype(int)
 
 cm_default   = confusion_matrix(y_test, y_pred_final)
 cm_optimized = confusion_matrix(y_test, y_pred_optimized)
 
+print(f"  Eşik validation setinde optimize edildi: {optimal_threshold:.2f}")
 print(f"  Varsayılan eşik (0.50)  → Diyabetliyi kaçırma: {cm_default[1][0]} / {sum(y_test==1)}")
 print(f"  Optimize eşik  ({optimal_threshold:.2f}) → Diyabetliyi kaçırma: {cm_optimized[1][0]} / {sum(y_test==1)}")
 print(f"  Kazanılan hasta sayısı : {cm_default[1][0] - cm_optimized[1][0]}")
 
-# 10. FEATURE IMPORTANCE (SADECE RANDOM FOREST İÇİN)
-if "Random Forest" in sonuclar:
-    print("\n[11] ÖZELLİK KATKISI (Feature Importance - Random Forest):")
-    rf_model = sonuclar["Random Forest"]['model']
+# 11. FEATURE IMPORTANCE (SADECE AĞAÇ TABANLI FİNAL MODEL İÇİN)
+if hasattr(final_model, "feature_importances_"):
+    print(f"\n[11] ÖZELLİK KATKISI (Feature Importance - {final_name}):")
     feature_importance_rf = pd.DataFrame({
-        'Feature': X.columns,
-        'Importance': rf_model.feature_importances_
+        'Feature': final_features,
+        'Importance': final_model.feature_importances_
     }).sort_values('Importance', ascending=False)
     print(feature_importance_rf.to_string(index=False))
+else:
+    print(f"\n[11] Feature Importance atlandı ({final_name} bu metriği doğal olarak üretmiyor).")
 
 # 11. FINAL MODEL KAYDET
 print(f"\n[12] FINAL MODEL KAYDEDILIYOR ({final_name})")
@@ -252,9 +309,10 @@ print("✓ model.pkl kaydedildi")
 print("\nDETAYLI RAPOR ÖZETİ:")
 print(f"  • Binary Classification     : ✓")
 print(f"  • Train-Test Split          : ✓ (80-20, stratified)")
+print(f"  • Class Balancing           : ✓ (Downsampling, hedef 2:1)")
 print(f"  • Cross Validation          : ✓ (5-Fold Stratified K-Fold)")
 print(f"  • Feature Selection         : ✓ (Mutual Information)")
-print(f"  • 5 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, RF, XGBoost)")
+print(f"  • 6 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, SVM, RF, XGBoost)")
 print(f"  • Eşik Optimizasyonu        : ✓ (Optimal eşik: {optimal_threshold:.2f})")
 print(f"  • Full vs Top 5             : ✓")
 print(f"  • ROC Eğrisi                : ✓ (roc_curve.png)")
