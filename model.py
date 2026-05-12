@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
@@ -21,9 +22,10 @@ print("DIYABET RISK TAHMIN MODELI - ADVANCED")
 print("="*60)
 
 # 1. VERI YÜKLEME
-df = pd.read_csv("diabetes.csv")
-print(f"\n[1] Veri Yüklendi: {df.shape[0]} örnek, {df.shape[1]} özellik")
-print(f"    Sınıf dağılımı: {df['Outcome'].value_counts().to_dict()}")
+df = pd.read_csv("diabetes_augmented.csv")
+print(f"\n[1] Veri Yüklendi: diabetes_augmented.csv")
+print(f"    {df.shape[0]} örnek, {df.shape[1]} özellik")
+print(f"    Sınıf dağılımı: {df['Outcome'].value_counts().sort_index().to_dict()}")
 
 # 2. VERİ TEMIZLEME
 cols = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
@@ -67,7 +69,7 @@ print(f"\n    En önemli 5 özellik: {top_5_features}")
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # 6. TÜM MODELLERİ EĞİT (TAM ÖZELLİKLERLE)
-print("\n[6] MODEL EĞİTİMİ (5 Farklı Algoritma - 8 özellik)")
+print("\n[6] MODEL EĞİTİMİ (6 Farklı Algoritma - 8 özellik)")
 print("     " + "-"*50)
 
 scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
@@ -86,6 +88,10 @@ modeller = {
     "XGBoost": XGBClassifier(n_estimators=100, random_state=42, max_depth=6,
                               scale_pos_weight=scale_pos_weight,
                               eval_metric='logloss', verbosity=0),
+    "SVM": Pipeline([
+        ('scaler', StandardScaler()),
+        ('model', SVC(kernel='rbf', probability=True, random_state=42, class_weight='balanced'))
+    ]),
 }
 
 sonuclar = {}
@@ -95,7 +101,8 @@ for isim, model in modeller.items():
     y_pred = model.predict(X_test)
     acc    = accuracy_score(y_test, y_pred)
     auc    = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-    cv_auc = cross_val_score(model, X, y, cv=skf, scoring='roc_auc').mean()
+    # CV sadece eğitim verisi üzerinde yapılmalı — test seti görünmemeli
+    cv_auc = cross_val_score(model, X_train, y_train, cv=skf, scoring='roc_auc').mean()
 
     sonuclar[isim] = {
         'model': model, 'y_pred': y_pred,
@@ -110,7 +117,7 @@ for isim, model in modeller.items():
     print(f"    Classification Report:\n{classification_report(y_test, y_pred, target_names=['Sağlıklı','Diyabetli'])}")
 
 # 7. TÜM KOMBİNASYONLAR: HER ALGORİTMA × (FULL + TOP 5)
-print(f"\n[7] MODEL KARŞILAŞTIRMASI (5 Algoritma × Full + Top 5 = 10 kombinasyon)")
+print(f"\n[7] MODEL KARŞILAŞTIRMASI (6 Algoritma × Full + Top 5 = 12 kombinasyon)")
 print("     " + "-"*62)
 
 tum_modeller = {
@@ -127,6 +134,10 @@ tum_modeller = {
     "XGBoost": XGBClassifier(n_estimators=100, random_state=42, max_depth=6,
                               scale_pos_weight=scale_pos_weight,
                               eval_metric='logloss', verbosity=0),
+    "SVM": Pipeline([
+        ('scaler', StandardScaler()),
+        ('model', SVC(kernel='rbf', probability=True, random_state=42, class_weight='balanced'))
+    ]),
 }
 
 tum_kombinasyonlar = {}
@@ -150,7 +161,7 @@ for isim in tum_modeller:
             y_pred = m.predict(X_test[features])
             acc    = accuracy_score(y_test, y_pred)
             auc    = roc_auc_score(y_test, m.predict_proba(X_test[features])[:, 1])
-            cv_auc = cross_val_score(m, X[features], y, cv=skf, scoring='roc_auc').mean()
+            cv_auc = cross_val_score(m, X_train[features], y_train, cv=skf, scoring='roc_auc').mean()
             tum_kombinasyonlar[kombinasyon_adi] = {
                 'model': m, 'features': features,
                 'acc': acc, 'auc': auc, 'cv_auc': cv_auc,
@@ -254,7 +265,7 @@ print(f"  • Binary Classification     : ✓")
 print(f"  • Train-Test Split          : ✓ (80-20, stratified)")
 print(f"  • Cross Validation          : ✓ (5-Fold Stratified K-Fold)")
 print(f"  • Feature Selection         : ✓ (Mutual Information)")
-print(f"  • 5 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, RF, XGBoost)")
+print(f"  • 6 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, RF, XGBoost, SVM)")
 print(f"  • Eşik Optimizasyonu        : ✓ (Optimal eşik: {optimal_threshold:.2f})")
 print(f"  • Full vs Top 5             : ✓")
 print(f"  • ROC Eğrisi                : ✓ (roc_curve.png)")
