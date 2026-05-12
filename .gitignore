@@ -179,3 +179,12 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# Claude Code internal files
+.claude/
+
+# Generated data files (run veri_artir.py to recreate)
+diabetes_augmented.csv
+diabetes_synthetic.csv
+
+# Generated model (run model.py to recreate)
+model.pkl

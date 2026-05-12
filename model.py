@@ -23,9 +23,10 @@ print("DIYABET RISK TAHMIN MODELI - ADVANCED")
 print("="*60)
 
 # 1. VERI YÜKLEME
-df = pd.read_csv("diabetes.csv")
-print(f"\n[1] Veri Yüklendi: {df.shape[0]} örnek, {df.shape[1]} özellik")
-print(f"    Sınıf dağılımı: {df['Outcome'].value_counts().to_dict()}")
+df = pd.read_csv("diabetes_augmented.csv")
+print(f"\n[1] Veri Yüklendi: diabetes_augmented.csv")
+print(f"    {df.shape[0]} örnek, {df.shape[1]} özellik")
+print(f"    Sınıf dağılımı: {df['Outcome'].value_counts().sort_index().to_dict()}")
 
 # 2. VERİ TEMIZLEME
 cols = ['Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI']
