@@ -12,10 +12,13 @@ from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.feature_selection import mutual_info_classif
+from sklearn.feature_selection import mutual_info_classif, chi2, f_classif, RFE, SelectFromModel
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from xgboost import XGBClassifier
+import optuna
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 import numpy as np
 
 print("="*60)
@@ -93,20 +96,101 @@ print(f"      Yeni eğitim dağılımı: {y_train.value_counts().to_dict()}")
 class_weight_opt = None
 scale_pos_weight = 1.0
 
-# 5. ÖZELLİK SEÇİMİ - sadece X_train üzerinde (Data Leakage önlemi)
+# 5. OZELLIK SECIMI - sadece X_train uzerinde (Data Leakage onlemi)
+print("\n[5] OZELLIK SECIMI - Coklu Yontem Karsilastirmasi (sadece egitim verisi):")
+print("     " + "-"*50)
+
+# Mutual Information
 mi_scores = mutual_info_classif(X_train, y_train, random_state=42)
+
+# Chi-Squared (MinMaxScaler ile negatif deger engeli)
+X_train_mm = MinMaxScaler().fit_transform(X_train)
+chi2_scores, _ = chi2(X_train_mm, y_train)
+
+# ANOVA F-test
+f_scores, _ = f_classif(X_train, y_train)
+
+# RFE - Recursive Feature Elimination
+rfe_model = RandomForestClassifier(n_estimators=100, random_state=42)
+rfe = RFE(estimator=rfe_model, n_features_to_select=5)
+rfe.fit(X_train, y_train)
+
+# SelectFromModel
+sfm_model = RandomForestClassifier(n_estimators=100, random_state=42)
+sfm_model.fit(X_train, y_train)
+sfm = SelectFromModel(sfm_model, prefit=True)
+
 feature_importance_df = pd.DataFrame({
-    'Feature': X.columns,
-    'MI_Score': mi_scores
+    'Feature':      list(X.columns),
+    'MI_Score':     mi_scores,
+    'Chi2_Score':   chi2_scores,
+    'F_Score':      f_scores,
+    'RFE_Rank':     rfe.ranking_,
+    'SFM_Selected': sfm.get_support().astype(int),
 }).sort_values('MI_Score', ascending=False)
 
-print("\n[5] ÖZELLİK ÖNEMLİLİĞİ (Mutual Information - sadece eğitim verisi):")
 print(feature_importance_df.to_string(index=False))
 
+# Karsilastirma grafigi
+fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+for ax, col, title, color in zip(
+    axes,
+    ['MI_Score', 'Chi2_Score', 'F_Score'],
+    ['Mutual Information', 'Chi-Squared', 'ANOVA F-test'],
+    ['#3498db', '#e74c3c', '#2ecc71']
+):
+    sorted_df = feature_importance_df.sort_values(col, ascending=True)
+    ax.barh(sorted_df['Feature'], sorted_df[col], color=color)
+    ax.set_title(title)
+    ax.set_xlabel('Skor')
+plt.suptitle("Feature Selection Yontem Karsilastirmasi", fontsize=13)
+plt.tight_layout()
+plt.savefig("feature_selection_karsilastirma.png")
+plt.close()
+print("     feature_selection_karsilastirma.png kaydedildi")
+
 top_5_features = feature_importance_df.head(5)['Feature'].tolist()
-print(f"\n    En önemli 5 özellik: {top_5_features}")
+print(f"\n    En onemli 5 ozellik (MI): {top_5_features}")
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# 5.5 HIPERPARAMETRE OPTIMIZASYONU (Optuna)
+print("\n[5.5] HIPERPARAMETRE OPTIMIZASYONU (Optuna - 50 deneme)")
+print("      " + "-"*50)
+
+def optimize_rf(trial):
+    params = {
+        'n_estimators':      trial.suggest_int('n_estimators', 100, 500),
+        'max_depth':         trial.suggest_int('max_depth', 3, 15),
+        'min_samples_split': trial.suggest_int('min_samples_split', 2, 10),
+        'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 1, 5),
+        'max_features':      trial.suggest_categorical('max_features', ['sqrt', 'log2']),
+    }
+    m = RandomForestClassifier(**params, random_state=42)
+    return cross_val_score(m, X_train, y_train, cv=skf, scoring='roc_auc').mean()
+
+def optimize_xgb(trial):
+    params = {
+        'n_estimators':     trial.suggest_int('n_estimators', 100, 500),
+        'max_depth':        trial.suggest_int('max_depth', 3, 10),
+        'learning_rate':    trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+        'subsample':        trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+    }
+    m = XGBClassifier(**params, random_state=42, eval_metric='logloss', verbosity=0)
+    return cross_val_score(m, X_train, y_train, cv=skf, scoring='roc_auc').mean()
+
+study_rf = optuna.create_study(direction='maximize')
+study_rf.optimize(optimize_rf, n_trials=50)
+best_rf_params = study_rf.best_params
+print(f"  Random Forest - En iyi CV AUC : {study_rf.best_value:.4f}")
+print(f"  Parametreler                  : {best_rf_params}")
+
+study_xgb = optuna.create_study(direction='maximize')
+study_xgb.optimize(optimize_xgb, n_trials=50)
+best_xgb_params = study_xgb.best_params
+print(f"  XGBoost       - En iyi CV AUC : {study_xgb.best_value:.4f}")
+print(f"  Parametreler                  : {best_xgb_params}")
 
 # 6. TÜM MODELLERİ EĞİT (TAM ÖZELLİKLERLE)
 print("\n[6] MODEL EĞİTİMİ (6 Farklı Algoritma - 8 özellik)")
@@ -127,10 +211,11 @@ def build_models():
             ('scaler', StandardScaler()),
             ('model', SVC(kernel='rbf', probability=True, class_weight=class_weight_opt, random_state=42))
         ]),
-        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10, class_weight=class_weight_opt),
+        "Random Forest": RandomForestClassifier(
+            **best_rf_params, random_state=42, class_weight=class_weight_opt
+        ),
         "XGBoost": XGBClassifier(
-            n_estimators=100, random_state=42, max_depth=6,
-            scale_pos_weight=scale_pos_weight, eval_metric='logloss', verbosity=0
+            **best_xgb_params, random_state=42, eval_metric='logloss', verbosity=0
         ),
     }
 
@@ -212,7 +297,7 @@ final_features = en_iyi['features']
 final_name = en_iyi_isim
 
 print(
-    f"  Kazanan: {final_name} → CV-AUC: {en_iyi['cv_auc']:.4f}, "
+    f"  Kazanan: {final_name} : CV-AUC: {en_iyi['cv_auc']:.4f}, "
     f"Test AUC: {en_iyi['auc']:.4f}, Accuracy: {en_iyi['acc']:.4f}"
 )
 
@@ -252,7 +337,7 @@ plt.savefig("confusion_matrix.png")
 cm = confusion_matrix(y_test, y_pred_final)
 print(f"  confusion_matrix.png kaydedildi")
 print(f"  Diyabetliyi doğru yakaladı : {cm[1][1]} / {sum(y_test==1)}")
-print(f"  Diyabetliyi kaçırdı        : {cm[1][0]} / {sum(y_test==1)}  ← tehlikeli hata")
+print(f"  Diyabetliyi kaçırdı        : {cm[1][0]} / {sum(y_test==1)}  < tehlikeli hata")
 
 # ROC EĞRİSİ GRAFİĞİ (tüm algoritmalar - full model)
 print(f"\n[9] ROC EĞRİSİ GRAFİĞİ")
@@ -284,8 +369,8 @@ cm_default   = confusion_matrix(y_test, y_pred_final)
 cm_optimized = confusion_matrix(y_test, y_pred_optimized)
 
 print(f"  Eşik validation setinde optimize edildi: {optimal_threshold:.2f}")
-print(f"  Varsayılan eşik (0.50)  → Diyabetliyi kaçırma: {cm_default[1][0]} / {sum(y_test==1)}")
-print(f"  Optimize eşik  ({optimal_threshold:.2f}) → Diyabetliyi kaçırma: {cm_optimized[1][0]} / {sum(y_test==1)}")
+print(f"  Varsayılan eşik (0.50)  : Diyabetliyi kaçırma: {cm_default[1][0]} / {sum(y_test==1)}")
+print(f"  Optimize eşik  ({optimal_threshold:.2f}) : Diyabetliyi kaçırma: {cm_optimized[1][0]} / {sum(y_test==1)}")
 print(f"  Kazanılan hasta sayısı : {cm_default[1][0] - cm_optimized[1][0]}")
 
 # 11. FEATURE IMPORTANCE (SADECE AĞAÇ TABANLI FİNAL MODEL İÇİN)
@@ -306,18 +391,18 @@ print("     " + "-"*50)
 with open("model.pkl", "wb") as f:
     pickle.dump({'model': final_model, 'features': final_features, 'threshold': optimal_threshold}, f)
 
-print("✓ model.pkl kaydedildi")
+print("OK model.pkl kaydedildi")
 print("\nDETAYLI RAPOR ÖZETİ:")
-print(f"  • Binary Classification     : ✓")
-print(f"  • Train-Test Split          : ✓ (80-20, stratified)")
-print(f"  • Class Balancing           : ✓ (Downsampling, hedef 2:1)")
-print(f"  • Cross Validation          : ✓ (5-Fold Stratified K-Fold)")
-print(f"  • Feature Selection         : ✓ (Mutual Information)")
-print(f"  • 6 Algoritma Karşılaştırma : ✓ (LR, DT, KNN, SVM, RF, XGBoost)")
-print(f"  • Eşik Optimizasyonu        : ✓ (Optimal eşik: {optimal_threshold:.2f})")
-print(f"  • Full vs Top 5             : ✓")
-print(f"  • ROC Eğrisi                : ✓ (roc_curve.png)")
-print(f"  • Confusion Matrix          : ✓ (confusion_matrix.png)")
-print(f"  • Feature Importance        : ✓")
+print(f"  • Binary Classification     : OK")
+print(f"  • Train-Test Split          : OK (80-20, stratified)")
+print(f"  • Class Balancing           : OK (Downsampling, hedef 2:1)")
+print(f"  • Cross Validation          : OK (5-Fold Stratified K-Fold)")
+print(f"  • Feature Selection         : OK (Mutual Information)")
+print(f"  • 6 Algoritma Karşılaştırma : OK (LR, DT, KNN, SVM, RF, XGBoost)")
+print(f"  • Eşik Optimizasyonu        : OK (Optimal eşik: {optimal_threshold:.2f})")
+print(f"  • Full vs Top 5             : OK")
+print(f"  • ROC Eğrisi                : OK (roc_curve.png)")
+print(f"  • Confusion Matrix          : OK (confusion_matrix.png)")
+print(f"  • Feature Importance        : OK")
 print(f"  • Seçilen Model             : {final_name}")
 print("="*60)
