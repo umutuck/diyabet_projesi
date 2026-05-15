@@ -11,6 +11,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
+from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, RepeatedStratifiedKFold
 from sklearn.feature_selection import mutual_info_classif, chi2, f_classif, RFE, SelectFromModel
 from sklearn.preprocessing import MinMaxScaler
@@ -401,6 +402,26 @@ print(f"  Eşik validation setinde optimize edildi: {optimal_threshold:.2f}")
 print(f"  Varsayılan eşik (0.50)  : Diyabetliyi kaçırma: {cm_default[1][0]} / {sum(y_test==1)}")
 print(f"  Optimize eşik  ({optimal_threshold:.2f}) : Diyabetliyi kaçırma: {cm_optimized[1][0]} / {sum(y_test==1)}")
 print(f"  Kazanılan hasta sayısı : {cm_default[1][0] - cm_optimized[1][0]}")
+
+# 10.5 KALİBRASYON EĞRİSİ
+print(f"\n[10.5] KALİBRASYON EĞRİSİ")
+print("     " + "-"*50)
+
+plt.figure(figsize=(8, 6))
+for isim, s in sonuclar.items():
+    y_proba = s['model'].predict_proba(X_test)[:, 1]
+    prob_true, prob_pred = calibration_curve(y_test, y_proba, n_bins=10)
+    plt.plot(prob_pred, prob_true, marker='o', label=isim)
+
+plt.plot([0, 1], [0, 1], 'k--', label='Mükemmel Kalibrasyon')
+plt.xlabel("Tahmin Edilen Olasilik")
+plt.ylabel("Gercek Olasilik")
+plt.title("Kalibrasyon Egrisi - Tum Algoritmalar\n(Diyagonal cizgiye yakin = iyi kalibre)")
+plt.legend(loc='upper left', fontsize=8)
+plt.tight_layout()
+plt.savefig("output/pima_diabetes/kalibrasyon.png", dpi=150)
+plt.close()
+print("  output/pima_diabetes/kalibrasyon.png kaydedildi")
 
 # 11. FEATURE IMPORTANCE (SADECE AĞAÇ TABANLI FİNAL MODEL İÇİN)
 if hasattr(final_model, "feature_importances_"):
