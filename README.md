@@ -98,7 +98,7 @@ diyabet_projesi/
 
 ```bash
 # Gereksinimleri yükle
-pip install streamlit scikit-learn xgboost pandas matplotlib seaborn optuna sdv ucimlrepo shap
+pip install -r requirements.txt
 
 # 1. Sentetik veri üret (isteğe bağlı)
 python veri_artir.py
