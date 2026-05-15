@@ -11,7 +11,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, RepeatedStratifiedKFold
 from sklearn.feature_selection import mutual_info_classif, chi2, f_classif, RFE, SelectFromModel
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.pipeline import Pipeline
@@ -49,13 +49,25 @@ print("\n[3] Korelasyon Matrisi: korelasyon.png kaydedildi")
 X = df.drop("Outcome", axis=1)
 y = df["Outcome"]
 
-# 4. EĞITIM-TEST BÖLME (Özellik seçiminden önce - Data Leakage önlemi)
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
-print(f"\n[4] Eğitim-Test Bölme (80-20):")
-print(f"    Eğitim: {X_train.shape[0]} örnek")
-print(f"    Test: {X_test.shape[0]} örnek")
+# 4. EGITIM-TEST BOLME — 10 Iterasyon (Repeated Stratified K-Fold)
+# Her iterasyonda farkli bolme yapilir, 10 sonucun ortalamasi alinir
+rskf = RepeatedStratifiedKFold(n_splits=5, n_repeats=2, random_state=42)
+
+print(f"\n[4] Egitim-Test Bolme (10 Iterasyon - Repeated Stratified K-Fold):")
+print(f"    5-Fold x 2 Tekrar = 10 farkli test")
+
+iter_results = {
+    'acc': [], 'auc': []
+}
+
+# İlk fold'u asıl train/test olarak kullan, diğerleri CV için
+splits = list(rskf.split(X, y))
+train_idx, test_idx = splits[0]
+X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+print(f"    Egitim: {X_train.shape[0]} ornek")
+print(f"    Test  : {X_test.shape[0]} ornek")
 
 # 4.1 SINIF DENGELEME (Downsampling - hedef oran: 2:1)
 # Not: Sadece eğitim verisinde uygulanır; test setine asla dokunulmaz.
@@ -152,45 +164,62 @@ print("     feature_selection_karsilastirma.png kaydedildi")
 top_5_features = feature_importance_df.head(5)['Feature'].tolist()
 print(f"\n    En onemli 5 ozellik (MI): {top_5_features}")
 
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+# 10 iterasyon CV (5-Fold x 2 Tekrar)
+skf = RepeatedStratifiedKFold(n_splits=5, n_repeats=2, random_state=42)
 
-# 5.5 HIPERPARAMETRE OPTIMIZASYONU (Optuna)
-print("\n[5.5] HIPERPARAMETRE OPTIMIZASYONU (Optuna - 50 deneme)")
+# 5.5 HIPERPARAMETRE OPTIMIZASYONU (Optuna - parametreler cache'lenir)
+import json, os
+print("\n[5.5] HIPERPARAMETRE OPTIMIZASYONU (Optuna)")
 print("      " + "-"*50)
 
-def optimize_rf(trial):
-    params = {
-        'n_estimators':      trial.suggest_int('n_estimators', 100, 500),
-        'max_depth':         trial.suggest_int('max_depth', 3, 15),
-        'min_samples_split': trial.suggest_int('min_samples_split', 2, 10),
-        'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 1, 5),
-        'max_features':      trial.suggest_categorical('max_features', ['sqrt', 'log2']),
-    }
-    m = RandomForestClassifier(**params, random_state=42)
-    return cross_val_score(m, X_train, y_train, cv=skf, scoring='roc_auc').mean()
+PARAMS_FILE = "best_params.json"
 
-def optimize_xgb(trial):
-    params = {
-        'n_estimators':     trial.suggest_int('n_estimators', 100, 500),
-        'max_depth':        trial.suggest_int('max_depth', 3, 10),
-        'learning_rate':    trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-        'subsample':        trial.suggest_float('subsample', 0.6, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-    }
-    m = XGBClassifier(**params, random_state=42, eval_metric='logloss', verbosity=0)
-    return cross_val_score(m, X_train, y_train, cv=skf, scoring='roc_auc').mean()
+if os.path.exists(PARAMS_FILE):
+    with open(PARAMS_FILE, "r") as f:
+        saved = json.load(f)
+    best_rf_params  = saved["rf"]
+    best_xgb_params = saved["xgb"]
+    print(f"  Kaydedilmis parametreler yuklendi ({PARAMS_FILE})")
+    print(f"  Random Forest : {best_rf_params}")
+    print(f"  XGBoost       : {best_xgb_params}")
+else:
+    print("  Parametreler bulunamadi, Optuna calistiriliyor (50 deneme)...")
 
-study_rf = optuna.create_study(direction='maximize')
-study_rf.optimize(optimize_rf, n_trials=50)
-best_rf_params = study_rf.best_params
-print(f"  Random Forest - En iyi CV AUC : {study_rf.best_value:.4f}")
-print(f"  Parametreler                  : {best_rf_params}")
+    def optimize_rf(trial):
+        params = {
+            'n_estimators':      trial.suggest_int('n_estimators', 100, 500),
+            'max_depth':         trial.suggest_int('max_depth', 3, 15),
+            'min_samples_split': trial.suggest_int('min_samples_split', 2, 10),
+            'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 1, 5),
+            'max_features':      trial.suggest_categorical('max_features', ['sqrt', 'log2']),
+        }
+        m = RandomForestClassifier(**params, random_state=42)
+        return cross_val_score(m, X_train, y_train, cv=skf, scoring='roc_auc').mean()
 
-study_xgb = optuna.create_study(direction='maximize')
-study_xgb.optimize(optimize_xgb, n_trials=50)
-best_xgb_params = study_xgb.best_params
-print(f"  XGBoost       - En iyi CV AUC : {study_xgb.best_value:.4f}")
-print(f"  Parametreler                  : {best_xgb_params}")
+    def optimize_xgb(trial):
+        params = {
+            'n_estimators':     trial.suggest_int('n_estimators', 100, 500),
+            'max_depth':        trial.suggest_int('max_depth', 3, 10),
+            'learning_rate':    trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+            'subsample':        trial.suggest_float('subsample', 0.6, 1.0),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        }
+        m = XGBClassifier(**params, random_state=42, eval_metric='logloss', verbosity=0)
+        return cross_val_score(m, X_train, y_train, cv=skf, scoring='roc_auc').mean()
+
+    study_rf = optuna.create_study(direction='maximize')
+    study_rf.optimize(optimize_rf, n_trials=50)
+    best_rf_params = study_rf.best_params
+    print(f"  Random Forest - En iyi CV AUC : {study_rf.best_value:.4f}")
+
+    study_xgb = optuna.create_study(direction='maximize')
+    study_xgb.optimize(optimize_xgb, n_trials=50)
+    best_xgb_params = study_xgb.best_params
+    print(f"  XGBoost       - En iyi CV AUC : {study_xgb.best_value:.4f}")
+
+    with open(PARAMS_FILE, "w") as f:
+        json.dump({"rf": best_rf_params, "xgb": best_xgb_params}, f, indent=2)
+    print(f"  Parametreler kaydedildi: {PARAMS_FILE}")
 
 # 6. TÜM MODELLERİ EĞİT (TAM ÖZELLİKLERLE)
 print("\n[6] MODEL EĞİTİMİ (6 Farklı Algoritma - 8 özellik)")

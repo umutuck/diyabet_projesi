@@ -188,3 +188,4 @@ diabetes_synthetic.csv
 
 # Generated model (run model.py to recreate)
 model.pkl
+best_params.json
