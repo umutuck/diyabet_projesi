@@ -26,8 +26,8 @@ print("DIYABET RISK TAHMIN MODELI - ADVANCED")
 print("="*60)
 
 # 1. VERI YÜKLEME
-df = pd.read_csv("diabetes_augmented.csv")
-print(f"\n[1] Veri Yüklendi: diabetes_augmented.csv")
+df = pd.read_csv("data/diabetes_augmented.csv")
+print(f"\n[1] Veri Yüklendi: data/diabetes_augmented.csv")
 print(f"    {df.shape[0]} örnek, {df.shape[1]} özellik")
 print(f"    Sınıf dağılımı: {df['Outcome'].value_counts().sort_index().to_dict()}")
 
@@ -43,8 +43,8 @@ plt.figure(figsize=(9, 7))
 sns.heatmap(df.corr(numeric_only=True), annot=True, fmt=".2f", cmap='coolwarm')
 plt.title("Korelasyon Matrisi")
 plt.tight_layout()
-plt.savefig("korelasyon.png")
-print("\n[3] Korelasyon Matrisi: korelasyon.png kaydedildi")
+plt.savefig("output/korelasyon.png")
+print("\n[3] Korelasyon Matrisi: output/korelasyon.png kaydedildi")
 
 X = df.drop("Outcome", axis=1)
 y = df["Outcome"]
@@ -157,9 +157,9 @@ for ax, col, title, color in zip(
     ax.set_xlabel('Skor')
 plt.suptitle("Feature Selection Yontem Karsilastirmasi", fontsize=13)
 plt.tight_layout()
-plt.savefig("feature_selection_karsilastirma.png")
+plt.savefig("output/feature_selection_karsilastirma.png")
 plt.close()
-print("     feature_selection_karsilastirma.png kaydedildi")
+print("     output/feature_selection_karsilastirma.png kaydedildi")
 
 top_5_features = feature_importance_df.head(5)['Feature'].tolist()
 print(f"\n    En onemli 5 ozellik (MI): {top_5_features}")
@@ -172,7 +172,7 @@ import json, os
 print("\n[5.5] HIPERPARAMETRE OPTIMIZASYONU (Optuna)")
 print("      " + "-"*50)
 
-PARAMS_FILE = "best_params.json"
+PARAMS_FILE = "cache/best_params.json"
 
 if os.path.exists(PARAMS_FILE):
     with open(PARAMS_FILE, "r") as f:
@@ -361,10 +361,10 @@ ConfusionMatrixDisplay(
 ).plot(ax=ax, colorbar=False)
 ax.set_title(f"Confusion Matrix - {final_name}")
 plt.tight_layout()
-plt.savefig("confusion_matrix.png")
+plt.savefig("output/confusion_matrix.png")
 
 cm = confusion_matrix(y_test, y_pred_final)
-print(f"  confusion_matrix.png kaydedildi")
+print(f"  output/confusion_matrix.png kaydedildi")
 print(f"  Diyabetliyi doğru yakaladı : {cm[1][1]} / {sum(y_test==1)}")
 print(f"  Diyabetliyi kaçırdı        : {cm[1][0]} / {sum(y_test==1)}  < tehlikeli hata")
 
@@ -384,8 +384,8 @@ plt.ylabel("True Positive Rate (Recall)")
 plt.title("ROC Eğrisi - Tüm Algoritmalar")
 plt.legend(loc='lower right')
 plt.tight_layout()
-plt.savefig("roc_curve.png")
-print("  roc_curve.png kaydedildi")
+plt.savefig("output/roc_curve.png")
+print("  output/roc_curve.png kaydedildi")
 
 # 10. EŞİK OPTİMİZASYONU
 print(f"\n[10] EŞİK OPTİMİZASYONU (Threshold Optimization)")

@@ -11,7 +11,7 @@ print("VERİ ARTIRMA (Synthetic Data Generation)")
 print("="*60)
 
 # 1. Orijinal veriyi yükle
-df_original = pd.read_csv("diabetes.csv")
+df_original = pd.read_csv("data/diabetes.csv")
 print(f"\n[1] Orijinal veri: {df_original.shape[0]} satır")
 print(f"    Sınıf dağılımı: {df_original['Outcome'].value_counts().to_dict()}")
 
@@ -85,17 +85,17 @@ for i, col in enumerate(features):
 
 plt.suptitle("Orijinal vs Sentetik Veri Dağılımı", fontsize=13)
 plt.tight_layout()
-plt.savefig("dagilim_karsilastirma.png")
+plt.savefig("output/dagilim_karsilastirma.png")
 plt.close()
-print("    dagilim_karsilastirma.png kaydedildi")
+print("    output/dagilim_karsilastirma.png kaydedildi")
 
 # 6. Kaydet — sentetik ayrı, birleşik ayrı
-df_sentetik_tum.to_csv("diabetes_synthetic.csv", index=False)
-df_augmented.to_csv("diabetes_augmented.csv", index=False)
+df_sentetik_tum.to_csv("data/diabetes_synthetic.csv", index=False)
+df_augmented.to_csv("data/diabetes_augmented.csv", index=False)
 
 print(f"\n[5] Kaydedilen dosyalar:")
-print(f"    diabetes_synthetic.csv  : sadece sentetik ({len(df_sentetik_tum)} satir)")
-print(f"    diabetes_augmented.csv  : orijinal + sentetik ({df_augmented.shape[0]} satir)")
+print(f"    data/diabetes_synthetic.csv  : sadece sentetik ({len(df_sentetik_tum)} satir)")
+print(f"    data/diabetes_augmented.csv  : orijinal + sentetik ({df_augmented.shape[0]} satir)")
 
 print("\n" + "="*60)
 print("ÖZET")

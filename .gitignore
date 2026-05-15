@@ -183,9 +183,12 @@ cython_debug/
 .claude/
 
 # Generated data files (run veri_artir.py to recreate)
-diabetes_augmented.csv
-diabetes_synthetic.csv
+data/diabetes_augmented.csv
+data/diabetes_synthetic.csv
 
 # Generated model (run model.py to recreate)
 model.pkl
-best_params.json
+cache/best_params.json
+cache/params_pima.json
+cache/params_erken.json
+cache/params_kalp.json
