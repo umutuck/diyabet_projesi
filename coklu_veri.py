@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-from sklearn.preprocessing import LabelEncoder
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import cross_val_score, RepeatedStratifiedKFold
 from sklearn.metrics import (accuracy_score, roc_auc_score,
                              confusion_matrix, ConfusionMatrixDisplay, roc_curve)
@@ -14,7 +15,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.feature_selection import mutual_info_classif
+from sklearn.feature_selection import mutual_info_classif, chi2, f_classif, RFE, SelectFromModel
 from xgboost import XGBClassifier
 import optuna
 import json, os
@@ -61,10 +62,57 @@ def modelleri_olustur(best_rf, best_xgb):
     ]
 
 def grafikleri_kaydet(veri_adi, output_klasor, en_iyi_model, en_iyi_X_test,
-                      y_test, tum_modeller_sonuc, X_features, mi_df):
-    """Her veri seti icin confusion matrix, ROC egrisi ve feature importance grafigi kaydeder."""
+                      y_test, tum_modeller_sonuc, X_train, y_train, df_full):
+    """Her veri seti icin Pima ile ayni grafikleri kaydeder."""
 
-    # 1. Confusion Matrix
+    # 1. Korelasyon Matrisi
+    plt.figure(figsize=(9, 7))
+    sns.heatmap(df_full.corr(numeric_only=True), annot=True, fmt=".2f", cmap='coolwarm')
+    plt.title(f"Korelasyon Matrisi\n{veri_adi}")
+    plt.tight_layout()
+    plt.savefig(f"{output_klasor}/korelasyon.png", dpi=150)
+    plt.close()
+    print(f"  {output_klasor}/korelasyon.png kaydedildi")
+
+    # 2. Feature Selection - 5 Yontem Karsilastirmasi
+    mi_scores   = mutual_info_classif(X_train, y_train, random_state=42)
+    X_mm        = MinMaxScaler().fit_transform(X_train)
+    chi2_scores, _ = chi2(X_mm, y_train)
+    f_scores, _    = f_classif(X_train, y_train)
+    rfe_model   = RandomForestClassifier(n_estimators=100, random_state=42)
+    rfe         = RFE(estimator=rfe_model, n_features_to_select=min(5, X_train.shape[1]))
+    rfe.fit(X_train, y_train)
+    sfm_model   = RandomForestClassifier(n_estimators=100, random_state=42)
+    sfm_model.fit(X_train, y_train)
+    sfm         = SelectFromModel(sfm_model, prefit=True)
+
+    fs_df = pd.DataFrame({
+        'Feature':      X_train.columns,
+        'MI_Score':     mi_scores,
+        'Chi2_Score':   chi2_scores,
+        'F_Score':      f_scores,
+        'RFE_Rank':     rfe.ranking_,
+        'SFM_Selected': sfm.get_support().astype(int),
+    }).sort_values('MI_Score', ascending=False)
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    for ax, col, title, color in zip(
+        axes,
+        ['MI_Score', 'Chi2_Score', 'F_Score'],
+        ['Mutual Information', 'Chi-Squared', 'ANOVA F-test'],
+        ['#3498db', '#e74c3c', '#2ecc71']
+    ):
+        sorted_df = fs_df.sort_values(col, ascending=True)
+        ax.barh(sorted_df['Feature'], sorted_df[col], color=color, alpha=0.85)
+        ax.set_title(title)
+        ax.set_xlabel('Skor')
+    plt.suptitle(f"Feature Selection Karsilastirmasi\n{veri_adi}", fontsize=13)
+    plt.tight_layout()
+    plt.savefig(f"{output_klasor}/feature_selection_karsilastirma.png", dpi=150)
+    plt.close()
+    print(f"  {output_klasor}/feature_selection_karsilastirma.png kaydedildi")
+
+    # 3. Confusion Matrix
     y_pred = en_iyi_model.predict(en_iyi_X_test)
     fig, ax = plt.subplots(figsize=(5, 4))
     ConfusionMatrixDisplay(
@@ -77,11 +125,11 @@ def grafikleri_kaydet(veri_adi, output_klasor, en_iyi_model, en_iyi_X_test,
     plt.close()
     print(f"  {output_klasor}/confusion_matrix.png kaydedildi")
 
-    # 2. ROC Egrisi (tum modeller)
+    # 4. ROC Egrisi (tum modeller)
     plt.figure(figsize=(8, 6))
     for ad, model, Xte in tum_modeller_sonuc:
         y_proba = model.predict_proba(Xte)[:, 1]
-        auc = roc_auc_score(y_test, y_proba)
+        auc     = roc_auc_score(y_test, y_proba)
         fpr, tpr, _ = roc_curve(y_test, y_proba)
         plt.plot(fpr, tpr, label=f"{ad} (AUC={auc:.3f})")
     plt.plot([0, 1], [0, 1], 'k--', label='Rastgele (AUC=0.500)')
@@ -94,19 +142,23 @@ def grafikleri_kaydet(veri_adi, output_klasor, en_iyi_model, en_iyi_X_test,
     plt.close()
     print(f"  {output_klasor}/roc_curve.png kaydedildi")
 
-    # 3. Feature Importance (Mutual Information)
-    plt.figure(figsize=(7, 5))
-    mi_plot = mi_df.sort_values('MI', ascending=True)
-    plt.barh(mi_plot['Feature'], mi_plot['MI'], color='#3498db', alpha=0.85)
-    plt.xlabel("Mutual Information Skoru")
-    plt.title(f"Ozellik Onemliligi\n{veri_adi}")
-    plt.tight_layout()
-    plt.savefig(f"{output_klasor}/feature_importance.png", dpi=150)
-    plt.close()
-    print(f"  {output_klasor}/feature_importance.png kaydedildi")
+    # 5. Feature Importance (RF - en iyi modelden)
+    if hasattr(en_iyi_model, 'feature_importances_'):
+        fi = pd.DataFrame({
+            'Feature':    en_iyi_X_test.columns,
+            'Importance': en_iyi_model.feature_importances_
+        }).sort_values('Importance', ascending=True)
+        plt.figure(figsize=(7, 5))
+        plt.barh(fi['Feature'], fi['Importance'], color='#9b59b6', alpha=0.85)
+        plt.xlabel("Onem Skoru")
+        plt.title(f"Feature Importance (RF/XGBoost)\n{veri_adi}")
+        plt.tight_layout()
+        plt.savefig(f"{output_klasor}/feature_importance.png", dpi=150)
+        plt.close()
+        print(f"  {output_klasor}/feature_importance.png kaydedildi")
 
 
-def pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor):
+def pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor, df_full):
     """Tek bir veri seti icin tam pipeline."""
     print(f"\n{'='*65}")
     print(f"  VERI SETI : {veri_adi}")
@@ -235,7 +287,7 @@ def pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor):
     # ---- Grafikleri Kaydet ----------------------------------------
     print(f"\n  Grafikler kaydediliyor: {output_klasor}/")
     grafikleri_kaydet(veri_adi, output_klasor, en_iyi_model, en_iyi_X_test,
-                      y_test, tum_modeller_sonuc, X.columns, mi_df)
+                      y_test, tum_modeller_sonuc, X_train, y_train, df_full)
 
     return {
         'Veri Seti':    veri_adi,
@@ -259,7 +311,9 @@ def yukle_pima():
         df[col] = df[col].replace(0, df[col].median())
     X = df.drop('Outcome', axis=1)
     y = df['Outcome']
-    return X, y
+    df_full = X.copy()
+    df_full['Outcome'] = y.values
+    return X.reset_index(drop=True), y.reset_index(drop=True), df_full
 
 def yukle_erken_evre():
     df = pd.read_csv("data/early_stage_diabetes.csv")
@@ -270,7 +324,9 @@ def yukle_erken_evre():
         if X[col].dtype == 'object':
             X[col] = le.fit_transform(X[col].astype(str))
     y = (y == 'Positive').astype(int)
-    return X.reset_index(drop=True), y.reset_index(drop=True)
+    df_full = X.copy()
+    df_full['class'] = y.values
+    return X.reset_index(drop=True), y.reset_index(drop=True), df_full
 
 def yukle_kalp():
     df = pd.read_csv("data/heart_disease.csv")
@@ -278,7 +334,9 @@ def yukle_kalp():
     y = df['target'].copy()
     X = X.apply(pd.to_numeric, errors='coerce').fillna(X.median())
     y = (y > 0).astype(int)
-    return X.reset_index(drop=True), y.reset_index(drop=True)
+    df_full = X.copy()
+    df_full['target'] = y.values
+    return X.reset_index(drop=True), y.reset_index(drop=True), df_full
 
 
 # ============================================================
@@ -295,8 +353,8 @@ tum_sonuclar = []
 
 for veri_adi, yukle_fn, params_dosya, output_klasor in veri_setleri:
     print(f"\nVeri seti yukleniyor: {veri_adi} ...")
-    X, y = yukle_fn()
-    sonuc = pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor)
+    X, y, df_full = yukle_fn()
+    sonuc = pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor, df_full)
     tum_sonuclar.append(sonuc)
 
 
