@@ -43,8 +43,8 @@ plt.figure(figsize=(9, 7))
 sns.heatmap(df.corr(numeric_only=True), annot=True, fmt=".2f", cmap='coolwarm')
 plt.title("Korelasyon Matrisi")
 plt.tight_layout()
-plt.savefig("output/korelasyon.png")
-print("\n[3] Korelasyon Matrisi: output/korelasyon.png kaydedildi")
+plt.savefig("output/pima_diabetes/korelasyon.png")
+print("\n[3] Korelasyon Matrisi: output/pima_diabetes/korelasyon.png kaydedildi")
 
 X = df.drop("Outcome", axis=1)
 y = df["Outcome"]
@@ -157,9 +157,9 @@ for ax, col, title, color in zip(
     ax.set_xlabel('Skor')
 plt.suptitle("Feature Selection Yontem Karsilastirmasi", fontsize=13)
 plt.tight_layout()
-plt.savefig("output/feature_selection_karsilastirma.png")
+plt.savefig("output/pima_diabetes/feature_selection_karsilastirma.png")
 plt.close()
-print("     output/feature_selection_karsilastirma.png kaydedildi")
+print("     output/pima_diabetes/feature_selection_karsilastirma.png kaydedildi")
 
 top_5_features = feature_importance_df.head(5)['Feature'].tolist()
 print(f"\n    En onemli 5 ozellik (MI): {top_5_features}")
@@ -361,10 +361,10 @@ ConfusionMatrixDisplay(
 ).plot(ax=ax, colorbar=False)
 ax.set_title(f"Confusion Matrix - {final_name}")
 plt.tight_layout()
-plt.savefig("output/confusion_matrix.png")
+plt.savefig("output/pima_diabetes/confusion_matrix.png")
 
 cm = confusion_matrix(y_test, y_pred_final)
-print(f"  output/confusion_matrix.png kaydedildi")
+print(f"  output/pima_diabetes/confusion_matrix.png kaydedildi")
 print(f"  Diyabetliyi doğru yakaladı : {cm[1][1]} / {sum(y_test==1)}")
 print(f"  Diyabetliyi kaçırdı        : {cm[1][0]} / {sum(y_test==1)}  < tehlikeli hata")
 
@@ -384,8 +384,8 @@ plt.ylabel("True Positive Rate (Recall)")
 plt.title("ROC Eğrisi - Tüm Algoritmalar")
 plt.legend(loc='lower right')
 plt.tight_layout()
-plt.savefig("output/roc_curve.png")
-print("  output/roc_curve.png kaydedildi")
+plt.savefig("output/pima_diabetes/roc_curve.png")
+print("  output/pima_diabetes/roc_curve.png kaydedildi")
 
 # 10. EŞİK OPTİMİZASYONU
 print(f"\n[10] EŞİK OPTİMİZASYONU (Threshold Optimization)")

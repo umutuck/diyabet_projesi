@@ -85,9 +85,9 @@ for i, col in enumerate(features):
 
 plt.suptitle("Orijinal vs Sentetik Veri Dağılımı", fontsize=13)
 plt.tight_layout()
-plt.savefig("output/dagilim_karsilastirma.png")
+plt.savefig("output/pima_diabetes/dagilim_karsilastirma.png")
 plt.close()
-print("    output/dagilim_karsilastirma.png kaydedildi")
+print("    output/pima_diabetes/dagilim_karsilastirma.png kaydedildi")
 
 # 6. Kaydet — sentetik ayrı, birleşik ayrı
 df_sentetik_tum.to_csv("data/diabetes_synthetic.csv", index=False)

@@ -7,8 +7,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split, cross_val_score, RepeatedStratifiedKFold
-from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.model_selection import cross_val_score, RepeatedStratifiedKFold
+from sklearn.metrics import (accuracy_score, roc_auc_score,
+                             confusion_matrix, ConfusionMatrixDisplay, roc_curve)
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
@@ -20,6 +21,11 @@ import json, os
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
+# Klasorleri olustur
+for klasor in ["output/pima_diabetes", "output/early_stage_diabetes",
+               "output/heart_disease", "output/karsilastirma"]:
+    os.makedirs(klasor, exist_ok=True)
+
 print("=" * 65)
 print("COKLU VERI SETI KARSILASTIRMASI")
 print("=" * 65)
@@ -29,7 +35,6 @@ print("=" * 65)
 # ============================================================
 
 def sinif_dengele(X, y, hedef_oran=2.0):
-    """Cok sayida buyuk sinifi downsample eder."""
     df = X.copy()
     df['__target__'] = y.values
     counts = df['__target__'].value_counts()
@@ -55,12 +60,58 @@ def modelleri_olustur(best_rf, best_xgb):
                                               eval_metric='logloss', verbosity=0)),
     ]
 
-def pipeline_calistir(X, y, veri_adi, params_dosya):
+def grafikleri_kaydet(veri_adi, output_klasor, en_iyi_model, en_iyi_X_test,
+                      y_test, tum_modeller_sonuc, X_features, mi_df):
+    """Her veri seti icin confusion matrix, ROC egrisi ve feature importance grafigi kaydeder."""
+
+    # 1. Confusion Matrix
+    y_pred = en_iyi_model.predict(en_iyi_X_test)
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ConfusionMatrixDisplay(
+        confusion_matrix(y_test, y_pred),
+        display_labels=["Negatif (0)", "Pozitif (1)"]
+    ).plot(ax=ax, colorbar=False)
+    ax.set_title(f"Confusion Matrix\n{veri_adi}", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(f"{output_klasor}/confusion_matrix.png", dpi=150)
+    plt.close()
+    print(f"  {output_klasor}/confusion_matrix.png kaydedildi")
+
+    # 2. ROC Egrisi (tum modeller)
+    plt.figure(figsize=(8, 6))
+    for ad, model, Xte in tum_modeller_sonuc:
+        y_proba = model.predict_proba(Xte)[:, 1]
+        auc = roc_auc_score(y_test, y_proba)
+        fpr, tpr, _ = roc_curve(y_test, y_proba)
+        plt.plot(fpr, tpr, label=f"{ad} (AUC={auc:.3f})")
+    plt.plot([0, 1], [0, 1], 'k--', label='Rastgele (AUC=0.500)')
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title(f"ROC Egrisi\n{veri_adi}")
+    plt.legend(loc='lower right', fontsize=8)
+    plt.tight_layout()
+    plt.savefig(f"{output_klasor}/roc_curve.png", dpi=150)
+    plt.close()
+    print(f"  {output_klasor}/roc_curve.png kaydedildi")
+
+    # 3. Feature Importance (Mutual Information)
+    plt.figure(figsize=(7, 5))
+    mi_plot = mi_df.sort_values('MI', ascending=True)
+    plt.barh(mi_plot['Feature'], mi_plot['MI'], color='#3498db', alpha=0.85)
+    plt.xlabel("Mutual Information Skoru")
+    plt.title(f"Ozellik Onemliligi\n{veri_adi}")
+    plt.tight_layout()
+    plt.savefig(f"{output_klasor}/feature_importance.png", dpi=150)
+    plt.close()
+    print(f"  {output_klasor}/feature_importance.png kaydedildi")
+
+
+def pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor):
     """Tek bir veri seti icin tam pipeline."""
     print(f"\n{'='*65}")
-    print(f"  VERI SETI: {veri_adi}")
-    print(f"  Boyut: {X.shape[0]} satirx{X.shape[1]} ozellik")
-    print(f"  Sinif dagilimi: {dict(y.value_counts().sort_index())}")
+    print(f"  VERI SETI : {veri_adi}")
+    print(f"  Boyut     : {X.shape[0]} satir x {X.shape[1]} ozellik")
+    print(f"  Sinif     : {dict(y.value_counts().sort_index())}")
     print(f"{'='*65}")
 
     # ---- Train / Test Bolme ----------------------------------------
@@ -71,7 +122,6 @@ def pipeline_calistir(X, y, veri_adi, params_dosya):
     X_test  = X.iloc[test_idx].reset_index(drop=True)
     y_train = y.iloc[train_idx].reset_index(drop=True)
     y_test  = y.iloc[test_idx].reset_index(drop=True)
-
     print(f"\n  Egitim: {len(X_train)} | Test: {len(X_test)}")
 
     # ---- Sinif Dengeleme -------------------------------------------
@@ -95,7 +145,7 @@ def pipeline_calistir(X, y, veri_adi, params_dosya):
             saved = json.load(f)
         best_rf_params  = saved["rf"]
         best_xgb_params = saved["xgb"]
-        print(f"  Optuna parametreleri cache'den yuklendi: {params_dosya}")
+        print(f"  Optuna cache'den yuklendi: {params_dosya}")
     else:
         print("  Optuna optimizasyonu basliyor (50 deneme)...")
 
@@ -135,13 +185,17 @@ def pipeline_calistir(X, y, veri_adi, params_dosya):
 
     # ---- Model Egitimi ve Degerlendirme ----------------------------
     modeller = modelleri_olustur(best_rf_params, best_xgb_params)
-    skf_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=2, random_state=42)
+    skf_cv   = RepeatedStratifiedKFold(n_splits=5, n_repeats=2, random_state=42)
 
     sonuclar = []
-    en_iyi_auc = -1
+    en_iyi_auc   = -1
     en_iyi_model = None
-    en_iyi_ad = ""
+    en_iyi_ad    = ""
     en_iyi_ozellik = "full"
+    en_iyi_X_test  = X_test
+
+    # ROC grafigi icin tum modellerin sonuclarini tut (full ozellik seti)
+    tum_modeller_sonuc = []
 
     for ad, model in modeller:
         for ozellik_seti, Xtr, Xte in [("full", X_train, X_test),
@@ -149,24 +203,23 @@ def pipeline_calistir(X, y, veri_adi, params_dosya):
             model.fit(Xtr, y_train)
             y_pred  = model.predict(Xte)
             y_proba = model.predict_proba(Xte)[:, 1]
-            acc = accuracy_score(y_test, y_pred)
-            auc = roc_auc_score(y_test, y_proba)
+            acc    = accuracy_score(y_test, y_pred)
+            auc    = roc_auc_score(y_test, y_proba)
             cv_auc = cross_val_score(model, Xtr, y_train,
                                      cv=skf_cv, scoring='roc_auc').mean()
             sonuclar.append({
-                'Model': ad,
-                'Ozellik': ozellik_seti,
-                'Accuracy': acc,
-                'AUC': auc,
-                'CV_AUC': cv_auc,
+                'Model': ad, 'Ozellik': ozellik_seti,
+                'Accuracy': acc, 'AUC': auc, 'CV_AUC': cv_auc,
             })
+            if ozellik_seti == "full":
+                tum_modeller_sonuc.append((ad, model, Xte))
+
             if auc > en_iyi_auc:
-                en_iyi_auc = auc
-                en_iyi_model = model
-                en_iyi_ad = ad
+                en_iyi_auc     = auc
+                en_iyi_model   = model
+                en_iyi_ad      = ad
                 en_iyi_ozellik = ozellik_seti
-                en_iyi_X_test = Xte
-                en_iyi_y_test = y_test
+                en_iyi_X_test  = Xte
 
     # ---- Sonuc Tablosu --------------------------------------------
     df_sn = pd.DataFrame(sonuclar).sort_values('AUC', ascending=False)
@@ -179,14 +232,19 @@ def pipeline_calistir(X, y, veri_adi, params_dosya):
     print(f"\n  >> En iyi: {en_iyi_ad} ({en_iyi_ozellik})")
     print(f"     Accuracy: {best_row['Accuracy']:.4f} | AUC: {best_row['AUC']:.4f}")
 
+    # ---- Grafikleri Kaydet ----------------------------------------
+    print(f"\n  Grafikler kaydediliyor: {output_klasor}/")
+    grafikleri_kaydet(veri_adi, output_klasor, en_iyi_model, en_iyi_X_test,
+                      y_test, tum_modeller_sonuc, X.columns, mi_df)
+
     return {
-        'Veri Seti':  veri_adi,
-        'Satirlar':   X.shape[0],
-        'Ozellikler': X.shape[1],
+        'Veri Seti':    veri_adi,
+        'Satirlar':     X.shape[0],
+        'Ozellikler':   X.shape[1],
         'En iyi Model': f"{en_iyi_ad} ({en_iyi_ozellik})",
-        'Accuracy':   round(best_row['Accuracy'], 4),
-        'AUC':        round(best_row['AUC'], 4),
-        'CV AUC':     round(best_row['CV_AUC'], 4),
+        'Accuracy':     round(best_row['Accuracy'], 4),
+        'AUC':          round(best_row['AUC'], 4),
+        'CV AUC':       round(best_row['CV_AUC'], 4),
     }
 
 
@@ -212,22 +270,15 @@ def yukle_erken_evre():
         if X[col].dtype == 'object':
             X[col] = le.fit_transform(X[col].astype(str))
     y = (y == 'Positive').astype(int)
-    X = X.reset_index(drop=True)
-    y = y.reset_index(drop=True)
-    return X, y
+    return X.reset_index(drop=True), y.reset_index(drop=True)
 
 def yukle_kalp():
     df = pd.read_csv("data/heart_disease.csv")
     X = df.drop('target', axis=1).copy()
     y = df['target'].copy()
-    # Eksik degerler
-    X = X.apply(pd.to_numeric, errors='coerce')
-    X = X.fillna(X.median())
-    # Binary: 0=saglikli, 1+=hasta
+    X = X.apply(pd.to_numeric, errors='coerce').fillna(X.median())
     y = (y > 0).astype(int)
-    X = X.reset_index(drop=True)
-    y = y.reset_index(drop=True)
-    return X, y
+    return X.reset_index(drop=True), y.reset_index(drop=True)
 
 
 # ============================================================
@@ -235,22 +286,22 @@ def yukle_kalp():
 # ============================================================
 
 veri_setleri = [
-    ("Pima Indians Diabetes",      yukle_pima,       "cache/params_pima.json"),
-    ("Early Stage Diabetes Risk",  yukle_erken_evre, "cache/params_erken.json"),
-    ("Heart Disease (Cleveland)",  yukle_kalp,       "cache/params_kalp.json"),
+    ("Pima Indians Diabetes",     yukle_pima,       "cache/params_pima.json",  "output/pima_diabetes"),
+    ("Early Stage Diabetes Risk", yukle_erken_evre, "cache/params_erken.json", "output/early_stage_diabetes"),
+    ("Heart Disease (Cleveland)", yukle_kalp,       "cache/params_kalp.json",  "output/heart_disease"),
 ]
 
 tum_sonuclar = []
 
-for veri_adi, yukle_fn, params_dosya in veri_setleri:
+for veri_adi, yukle_fn, params_dosya, output_klasor in veri_setleri:
     print(f"\nVeri seti yukleniyor: {veri_adi} ...")
     X, y = yukle_fn()
-    sonuc = pipeline_calistir(X, y, veri_adi, params_dosya)
+    sonuc = pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor)
     tum_sonuclar.append(sonuc)
 
 
 # ============================================================
-# GENEL KARSILASTIRMA TABLOSU
+# KARSILASTIRMA GRAFIGI (output/karsilastirma/)
 # ============================================================
 
 print("\n\n" + "=" * 65)
@@ -259,15 +310,16 @@ print("=" * 65)
 df_karsi = pd.DataFrame(tum_sonuclar)
 print(df_karsi.to_string(index=False))
 
-# ---- Karsilastirma Grafigi ------------------------------------
+# Bar chart: Accuracy, AUC, CV AUC yan yana
 fig, axes = plt.subplots(1, 3, figsize=(14, 5))
 metrikler = ['Accuracy', 'AUC', 'CV AUC']
 renkler   = ['#3498db', '#e74c3c', '#2ecc71']
 
 for i, metrik in enumerate(metrikler):
-    bars = axes[i].bar(df_karsi['Veri Seti'], df_karsi[metrik], color=renkler[i], alpha=0.85)
+    bars = axes[i].bar(df_karsi['Veri Seti'], df_karsi[metrik],
+                       color=renkler[i], alpha=0.85)
     axes[i].set_title(metrik, fontsize=13, fontweight='bold')
-    axes[i].set_ylim(0, 1.05)
+    axes[i].set_ylim(0, 1.1)
     axes[i].set_ylabel(metrik)
     axes[i].tick_params(axis='x', rotation=15)
     for bar, val in zip(bars, df_karsi[metrik]):
@@ -277,10 +329,36 @@ for i, metrik in enumerate(metrikler):
 
 plt.suptitle("3 Veri Seti Karsilastirmasi", fontsize=14, fontweight='bold')
 plt.tight_layout()
-plt.savefig("output/coklu_veri_karsilastirma.png", dpi=150)
+plt.savefig("output/karsilastirma/karsilastirma_grafik.png", dpi=150)
 plt.close()
+print("\noutput/karsilastirma/karsilastirma_grafik.png kaydedildi")
 
-print("\noutput/coklu_veri_karsilastirma.png kaydedildi")
+# Radar chart (isteğe bağlı ek görsel)
+kategoriler = ['Accuracy', 'AUC', 'CV AUC']
+N = len(kategoriler)
+angles = [n / float(N) * 2 * np.pi for n in range(N)]
+angles += angles[:1]
+
+fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+renkler_radar = ['#3498db', '#e74c3c', '#2ecc71']
+
+for idx, row in df_karsi.iterrows():
+    values = [row['Accuracy'], row['AUC'], row['CV AUC']]
+    values += values[:1]
+    ax.plot(angles, values, 'o-', linewidth=2,
+            color=renkler_radar[idx], label=row['Veri Seti'])
+    ax.fill(angles, values, alpha=0.1, color=renkler_radar[idx])
+
+ax.set_xticks(angles[:-1])
+ax.set_xticklabels(kategoriler, fontsize=11)
+ax.set_ylim(0, 1)
+ax.set_title("Radar Karsilastirma", fontsize=13, fontweight='bold', pad=20)
+ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=9)
+plt.tight_layout()
+plt.savefig("output/karsilastirma/radar_karsilastirma.png", dpi=150)
+plt.close()
+print("output/karsilastirma/radar_karsilastirma.png kaydedildi")
+
 print("\n" + "=" * 65)
 print("TAMAMLANDI")
 print("=" * 65)
