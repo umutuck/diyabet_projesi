@@ -24,10 +24,13 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.svm import SVC
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.naive_bayes import GaussianNB
 from sklearn.feature_selection import mutual_info_classif, chi2, f_classif, RFE, SelectFromModel
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 import optuna
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -246,9 +249,15 @@ def pipeline_calistir(X, y, df_full, veri_adi, params_dosya, output_klasor, mode
             "Random Forest": RandomForestClassifier(**best_rf, random_state=42),
             "XGBoost": XGBClassifier(**best_xgb, random_state=42,
                                      eval_metric='logloss', verbosity=0),
+            "LightGBM": LGBMClassifier(random_state=42, verbose=-1),
+            "Gradient Boosting": GradientBoostingClassifier(random_state=42),
+            "Naive Bayes": Pipeline([
+                ('scaler', StandardScaler()),
+                ('model', GaussianNB())
+            ]),
         }
 
-    print(f"\n  [6] 6 Algoritma x 2 Ozellik Seti = 12 Kombinasyon")
+    print(f"\n  [6] 9 Algoritma x 2 Ozellik Seti = 18 Kombinasyon")
     print(f"      {'Kombinasyon':<32} {'Accuracy':>10} {'AUC':>10} {'CV AUC':>10}")
     print("      " + "-"*60)
 

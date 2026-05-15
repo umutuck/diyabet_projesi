@@ -9,7 +9,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.naive_bayes import GaussianNB
 from sklearn.preprocessing import StandardScaler
+from lightgbm import LGBMClassifier
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, confusion_matrix, ConfusionMatrixDisplay, roc_curve, f1_score
 from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, RepeatedStratifiedKFold
@@ -223,7 +226,7 @@ else:
     print(f"  Parametreler kaydedildi: {PARAMS_FILE}")
 
 # 6. TÜM MODELLERİ EĞİT (TAM ÖZELLİKLERLE)
-print("\n[6] MODEL EĞİTİMİ (6 Farklı Algoritma - 8 özellik)")
+print("\n[6] MODEL EĞİTİMİ (9 Farklı Algoritma - 8 özellik)")
 print("     " + "-"*50)
 
 def build_models():
@@ -247,6 +250,12 @@ def build_models():
         "XGBoost": XGBClassifier(
             **best_xgb_params, random_state=42, eval_metric='logloss', verbosity=0
         ),
+        "LightGBM": LGBMClassifier(random_state=42, verbose=-1),
+        "Gradient Boosting": GradientBoostingClassifier(random_state=42),
+        "Naive Bayes": Pipeline([
+            ('scaler', StandardScaler()),
+            ('model', GaussianNB())
+        ]),
     }
 
 modeller = build_models()
@@ -274,7 +283,7 @@ for isim, model in modeller.items():
     print(f"    Classification Report (Diyabetli sınıfı odaklı):\n{classification_report(y_test, y_pred, target_names=['Negatif','Diyabetli'])}")
 
 # 7. TÜM KOMBİNASYONLAR: HER ALGORİTMA × (FULL + TOP 5)
-print(f"\n[7] MODEL KARŞILAŞTIRMASI (6 Algoritma × Full + Top 5 = 12 kombinasyon)")
+print(f"\n[7] MODEL KARŞILAŞTIRMASI (9 Algoritma × Full + Top 5 = 18 kombinasyon)")
 print("     " + "-"*62)
 
 tum_modeller = build_models()

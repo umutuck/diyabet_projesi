@@ -9,3 +9,4 @@ optuna==4.8.0
 sdv==1.36.1
 shap==0.51.0
 ucimlrepo==0.0.7
+lightgbm==4.6.0
