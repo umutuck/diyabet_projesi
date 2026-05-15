@@ -246,29 +246,32 @@ def pipeline_calistir(X, y, veri_adi, params_dosya, output_klasor, df_full):
     en_iyi_ozellik = "full"
     en_iyi_X_test  = X_test
 
+    import copy
+
     # ROC grafigi icin tum modellerin sonuclarini tut (full ozellik seti)
     tum_modeller_sonuc = []
 
     for ad, model in modeller:
         for ozellik_seti, Xtr, Xte in [("full", X_train, X_test),
                                         ("top5", X_train_top, X_test_top)]:
-            model.fit(Xtr, y_train)
-            y_pred  = model.predict(Xte)
-            y_proba = model.predict_proba(Xte)[:, 1]
+            m = copy.deepcopy(model)
+            m.fit(Xtr, y_train)
+            y_pred  = m.predict(Xte)
+            y_proba = m.predict_proba(Xte)[:, 1]
             acc    = accuracy_score(y_test, y_pred)
             auc    = roc_auc_score(y_test, y_proba)
-            cv_auc = cross_val_score(model, Xtr, y_train,
+            cv_auc = cross_val_score(m, Xtr, y_train,
                                      cv=skf_cv, scoring='roc_auc').mean()
             sonuclar.append({
                 'Model': ad, 'Ozellik': ozellik_seti,
                 'Accuracy': acc, 'AUC': auc, 'CV_AUC': cv_auc,
             })
             if ozellik_seti == "full":
-                tum_modeller_sonuc.append((ad, model, Xte))
+                tum_modeller_sonuc.append((ad, m, Xte))
 
             if auc > en_iyi_auc:
                 en_iyi_auc     = auc
-                en_iyi_model   = model
+                en_iyi_model   = m
                 en_iyi_ad      = ad
                 en_iyi_ozellik = ozellik_seti
                 en_iyi_X_test  = Xte
